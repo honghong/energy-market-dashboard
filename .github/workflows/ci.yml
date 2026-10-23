@@ -22,8 +22,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U energy" --health-interval 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -46,8 +46,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -60,7 +60,7 @@ jobs:
   infra:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Lint and compile Bicep
         run: |
           az bicep install
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend, frontend, infra]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Single-container image (Azure)
         run: docker build -t energy-dashboard .
       - name: Compose stack

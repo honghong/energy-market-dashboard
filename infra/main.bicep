@@ -2,7 +2,7 @@
 //
 // Deployed in two passes by .github/workflows/deploy.yml:
 //   1. deployApps=false  -> registry, Key Vault, identity, PostgreSQL, Container Apps environment
-//   2. (image is built into the registry with `az acr build`)
+//   2. (image is built on the GitHub runner and pushed to the registry)
 //   3. deployApps=true   -> the web Container App and the scheduled pipeline Container Apps Job
 
 targetScope = 'resourceGroup'

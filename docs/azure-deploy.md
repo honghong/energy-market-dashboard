@@ -5,7 +5,7 @@ The app runs on **Azure Container Apps**. One container serves both the FastAPI 
 ```mermaid
 flowchart LR
     GH[GitHub Actions] -->|OIDC| ARM[Bicep deployment]
-    GH -->|az acr build| ACR[Container Registry]
+    GH -->|docker push| ACR[Container Registry]
     ACR --> WEB[Container App: API + UI]
     ACR --> JOB[Container Apps Job: ingest, weekdays 22:30 UTC]
     KV[Key Vault] -->|managed identity| WEB
@@ -34,8 +34,8 @@ done
 ### 2. Create the resource group
 
 ```bash
-RG=rg-energy-dashboard
-LOCATION=southcentralus   # San Antonio; any region with Container Apps and PostgreSQL works
+RG=rg-energy-dash-cus
+LOCATION=centralus        # check PostgreSQL availability first (see Troubleshooting)
 az group create -n $RG -l $LOCATION
 ```
 
@@ -57,6 +57,11 @@ az ad app federated-credential create --id $APP_ID --parameters "{
   \"subject\": \"repo:$REPO:environment:production\",
   \"audiences\": [\"api://AzureADTokenExchange\"]
 }"
+
+# Note: newer GitHub repos send an ID-based subject such as
+#   repo:<user>@<owner-id>/<repo>@<repo-id>:environment:production
+# If the first deploy fails with AADSTS700213, add a second federated credential
+# using the exact subject printed in that error message.
 
 # Owner on this resource group only: the template creates role assignments
 # (AcrPull and Key Vault Secrets User) for the app's managed identity.
@@ -83,7 +88,7 @@ gh variable set AZURE_LOCATION --body "$LOCATION"
 
 ### 5. Deploy
 
-Go to **Actions → Deploy to Azure → Run workflow**. The first run takes about 10–15 minutes, mostly creating the PostgreSQL server. When it finishes, the run summary shows the app URL, which looks like `https://emd-web.<id>.southcentralus.azurecontainerapps.io`.
+Go to **Actions → Deploy to Azure → Run workflow**. The first run takes about 10–15 minutes, mostly creating the PostgreSQL server. When it finishes, the run summary shows the app URL, which looks like `https://emd-web.<id>.centralus.azurecontainerapps.io`.
 
 To deploy automatically after every green CI run on `main`, set:
 
@@ -100,7 +105,7 @@ gh variable set AZURE_DEPLOY_ENABLED --body true
 | PostgreSQL Flexible Server (Burstable B1ms) | Database, TLS required |
 | Key Vault | `database-url` and `eia-api-key` secrets |
 | User-assigned managed identity | Pulls images from the registry and reads Key Vault secrets |
-| Container Registry (Basic) | Images, built in Azure with `az acr build` |
+| Container Registry (Basic) | Images, pushed from GitHub Actions |
 | Log Analytics workspace | Container logs, 30-day retention |
 
 ## Cost control
@@ -115,7 +120,18 @@ gh variable set AZURE_DEPLOY_ENABLED --body true
 
 ## Troubleshooting
 
-- **The PostgreSQL deployment fails with a location or quota error.** Some new or free-trial subscriptions restrict PostgreSQL in certain regions. Set `AZURE_LOCATION` to another region, such as `centralus` or `eastus2`, and re-run.
+Problems seen on a brand-new subscription, and their fixes:
+
+- **`AADSTS700213: No matching federated identity record`** — GitHub sent an ID-based subject. Copy the subject from the error into a new federated credential (step 3) and re-run.
+- **`ParameterOutOfRange … 'Version' should be in: []`** — PostgreSQL Flexible Server isn't offered to your subscription in that region. Check availability, then use a new resource group in a region that lists versions:
+  ```powershell
+  foreach ($r in "centralus","westus3","northcentralus","southcentralus") {
+    $v = az postgres flexible-server list-skus -l $r --query "[0].supportedServerVersions[].name" -o tsv 2>$null
+    "{0,-16} {1}" -f $r, ($(if ($v) { $v -join "," } else { "NOT AVAILABLE" })) }
+  ```
+- **`MaxNumberOfGlobalEnvironmentsInSubExceeded`** — new subscriptions allow one Container Apps environment. Wait for any earlier resource group to finish deleting (`az containerapp env list -o table` shows nothing left), then re-run.
+- **`TasksOperationsNotAllowed`** — ACR Tasks (`az acr build`) are disabled on many new subscriptions. The workflow builds on the GitHub runner and pushes with `docker push` for this reason.
+
 - **The app shows "Sample data (simulated)".** `EIA_API_KEY` wasn't set when you deployed. Add the secret and re-run the workflow.
 - **Check logs:**
   - App: `az containerapp logs show -g $RG -n emd-web --follow`

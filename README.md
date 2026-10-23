@@ -53,7 +53,7 @@ docker-compose.yml    local stack: PostgreSQL + API + nginx-served UI
 - **Incremental and idempotent loads.** Each run starts at the latest stored date minus `REVISION_LOOKBACK_DAYS`, and `INSERT … ON CONFLICT DO UPDATE` overwrites revised values instead of duplicating them. Re-running the pipeline is always safe.
 - **Failure isolation.** Each series loads in its own transaction. If one EIA dataset is down, the run is marked `partial` and the other series still load.
 - **Warm rolling windows.** The API loads extra history before the requested start date, so moving averages and z-scores are populated from the first visible day.
-- **Cloud deployment as code.** Bicep defines every Azure resource. Deploys use OIDC (no stored credentials), images are built inside Azure Container Registry, and the app reads its secrets from Key Vault through a managed identity.
+- **Cloud deployment as code.** Bicep defines every Azure resource. Deploys use OIDC (no stored credentials), images are pushed to Azure Container Registry, and the app reads its secrets from Key Vault through a managed identity.
 - **Portable storage.** SQLAlchemy 2 runs on PostgreSQL in Docker and on SQLite for local development and tests.
 - **Accessible charts.** The colors come from a color-blind-validated palette with separate light and dark steps. Every chart has a legend and a table view, and status is shown with an icon and a label, never color alone.
 
