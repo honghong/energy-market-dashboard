@@ -1,0 +1,89 @@
+name: Deploy to Azure
+
+# Runs after CI passes on main, or manually from the Actions tab.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC login to Azure, no stored credentials
+  contents: read
+
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-energy-dashboard' }}
+  LOCATION: ${{ vars.AZURE_LOCATION || 'southcentralus' }}
+
+jobs:
+  deploy:
+    # Automatic deploys start once the repo variable AZURE_DEPLOY_ENABLED is set to "true".
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.AZURE_DEPLOY_ENABLED == 'true' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Infrastructure (registry, Key Vault, PostgreSQL, environment)
+        id: infra
+        env:
+          PG_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          EIA_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          az group create -n "$RESOURCE_GROUP" -l "$LOCATION" -o none
+          registry=$(az deployment group create -g "$RESOURCE_GROUP" -n infra \
+            -f infra/main.bicep \
+            -p deployApps=false postgresAdminPassword="$PG_PASSWORD" eiaApiKey="$EIA_KEY" \
+            --query properties.outputs.registryName.value -o tsv)
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+
+      - name: Build image in Azure Container Registry
+        run: |
+          tag=$(git rev-parse --short HEAD)
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          az acr build -r "${{ steps.infra.outputs.registry }}" \
+            -t "energy-dashboard:$tag" -t energy-dashboard:latest .
+
+      - name: Deploy web app and scheduled ingest job
+        id: apps
+        env:
+          PG_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          EIA_KEY: ${{ secrets.EIA_API_KEY }}
+        run: |
+          out=$(az deployment group create -g "$RESOURCE_GROUP" -n apps \
+            -f infra/main.bicep \
+            -p deployApps=true imageTag="$TAG" \
+               postgresAdminPassword="$PG_PASSWORD" eiaApiKey="$EIA_KEY" \
+            --query properties.outputs -o json)
+          echo "url=$(echo "$out" | jq -r .appUrl.value)" >> "$GITHUB_OUTPUT"
+          echo "job=$(echo "$out" | jq -r .jobName.value)" >> "$GITHUB_OUTPUT"
+
+      - name: Run the ingest job once (incremental, safe to repeat)
+        run: az containerapp job start -g "$RESOURCE_GROUP" -n "${{ steps.apps.outputs.job }}" -o none
+
+      - name: Smoke test
+        run: |
+          url="${{ steps.apps.outputs.url }}"
+          for i in $(seq 1 20); do
+            if curl -fsS "$url/api/health"; then
+              echo; echo "### Deployed: $url" >> "$GITHUB_STEP_SUMMARY"; exit 0
+            fi
+            sleep 15
+          done
+          echo "Health check failed for $url"; exit 1
