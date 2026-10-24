@@ -20,15 +20,9 @@ A full-stack data application for tracking energy commodity prices. A Python pip
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    EIA[EIA Open Data API v2] -->|httpx, paging, retries| P[Python pipeline]
-    S[Sample simulator] -.->|no API key| P
-    P -->|upsert| DB[(PostgreSQL)]
-    DB --> API[FastAPI + Pandas analytics]
-    API -->|JSON /api| UI[React + TypeScript + Recharts]
-    SCHED[In-process scheduler / CLI / POST /api/pipeline/run] --> P
-```
+![System architecture](docs/architecture.svg)
+
+![Data flow](docs/data-flow.svg)
 
 ```
 backend/
